@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+  "math/big"
 )
 
 func main() {
@@ -23,7 +24,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	imgs := make(chan image.Image, 1000000)
 	for _, file := range files {
 		f, err := os.Open(path.Join(dir, file.Name()))
 		if err != nil {
@@ -31,18 +31,12 @@ func main() {
 		}
 		img, _, err := image.Decode(f)
 		if err != nil {
+			f.Close()
 			continue
 		}
 		f.Close()
-		imgs <- img
-	}
-	close(imgs)
-
-	for curr := range imgs {
-		clear()
-		drawImg(curr)
+		drawImg(img)
 		time.Sleep(time.Duration(3) * time.Second)
-		clear()
 	}
 }
 
@@ -73,24 +67,22 @@ func luminance(r, g, b float64) float64 {
 }
 
 func avg(colors chan color.Color, size int) (float64, float64, float64) {
-	var sumR, sumB, sumG float64
-	sizeF := float64(size)
-	count := 0
+  sumR, sumG, sumB := big.NewFloat(0), big.NewFloat(0), big.NewFloat(0)
 	for c := range colors {
 		r, g, b, _ := c.RGBA()
-		sumR += float64(r>>8) / sizeF
-		sumG += float64(g>>8) / sizeF
-		sumB += float64(b>>8) / sizeF
-		count++
-		if count == size {
-			break
-		}
+		sumR.Add(sumR, big.NewFloat(float64(r>>8)))
+		sumG.Add(sumG, big.NewFloat(float64(g>>8)))
+		sumB.Add(sumB, big.NewFloat(float64(b>>8)))
 	}
-	return sumR, sumB, sumG
+	sizeF := big.NewFloat(float64(size))
+  r, _ := sumR.Quo(sumR, sizeF).Float64()
+  g, _ := sumG.Quo(sumG, sizeF).Float64()
+  b, _ := sumB.Quo(sumB, sizeF).Float64()
+  return r, g, b
 }
 
 func printColored(r, g, b float64, s string) {
-	fmt.Printf("%s", s)
+	fmt.Printf("\x1b[38;2;%d;%d;%dm%s\x1b[0m", int(r), int(g), int(b), s)
 }
 
 func drawImg(img image.Image) {
@@ -99,18 +91,18 @@ func drawImg(img image.Image) {
 	width, height := bounds.Dx()-2, bounds.Dy()-2
 	xChunkSize := float64(width) / float64(cols)
 	yChunkSize := float64(height) / float64(rows)
-	blocks := []rune(" ░▒▓▓██")
+	blocks := []rune("░▒▓█")
 
 	for y := 0.0; y < float64(height); y += yChunkSize {
-		for x := 0.0; x < float64(width)-10; x += xChunkSize {
-			colors := make(chan color.Color, 1+int(xChunkSize*yChunkSize))
+		for x := 0.0; x < float64(width)-5; x += xChunkSize {
+			colors := make(chan color.Color, int(xChunkSize*yChunkSize))
 			for i := 0; i < int(xChunkSize); i++ {
 				for j := 0; j < int(yChunkSize); j++ {
 					colors <- img.At(int(x)+int(i), int(y)+int(i))
 				}
 			}
 			close(colors)
-			r, g, b := avg(colors, 1+int(xChunkSize*yChunkSize))
+			r, g, b := avg(colors, len(colors))
 			lum := luminance(r, g, b)
 			printColored(r, g, b, string(blocks[int(lum/255*float64(len(blocks)-1))]))
 		}
