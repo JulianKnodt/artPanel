@@ -24,7 +24,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	imgs := make(chan string, 5)
+	imgs := make(chan string, 2)
 	go func(files []os.FileInfo) {
 		for _, file := range files {
 			f, err := os.Open(path.Join(dir, file.Name()))
@@ -66,11 +66,6 @@ func dimens() (int, int) {
 	return c, r
 }
 
-func clear() {
-	cmd := exec.Command("clear")
-	cmd.Run()
-}
-
 func luminance(r, g, b float64) float64 {
 	return 0.2126*r + 0.7152*g + 0.0722*b
 }
@@ -90,8 +85,25 @@ func avg(colors chan color.Color, size int) (float64, float64, float64) {
 	return r, g, b
 }
 
-func colored(r, g, b float64, s string) string {
-	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm%s\x1b[0m", int(r), int(g), int(b), s)
+type ColorString struct {
+  r, g, b int
+  contents string
+}
+
+func (c ColorString) str() string {
+	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm%s\x1b[0m", c.r, c.g, c.b, c.contents)
+}
+
+func (c ColorString) equalColors(o ColorString) bool {
+  return c.r == o.r &&c.g == o.g &&c.b == o.b
+}
+
+func colorsToString(colors []ColorString) string {
+  var res strings.Builder
+  for _, v := range colors {
+    res.WriteString(v.str())
+  }
+  return res.String()
 }
 
 func makeImg(img image.Image) string {
@@ -105,6 +117,7 @@ func makeImg(img image.Image) string {
 
 	for y := 0.0; y < float64(height)-5; y += yChunkSize {
     res.WriteRune('\n')
+    line := make([]ColorString, 0)
 		for x := 0.0; x < float64(width)-5; x += xChunkSize {
 			colors := make(chan color.Color, int(xChunkSize*yChunkSize))
 			for i := 0; i < int(xChunkSize); i++ {
@@ -115,9 +128,17 @@ func makeImg(img image.Image) string {
 			close(colors)
 			r, g, b := avg(colors, len(colors))
 			lum := luminance(r, g, b)
-			s := colored(r, g, b, string(blocks[int(lum/255*float64(len(blocks)-1))]))
-      res.WriteString(s)
+      contents := string(blocks[int(lum/255*float64(len(blocks)-1))])
+      c := ColorString{int(r),int(g),int(b),contents}
+      if (len(line) == 0) {
+        line = append(line, c)
+      } else if (line[len(line)-1].equalColors(c)) {
+        line[len(line)-1].contents += contents
+      } else {
+        line = append(line, c)
+      }
 		}
+    res.WriteString(colorsToString(line))
 	}
 
   return res.String()
