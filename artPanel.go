@@ -37,16 +37,20 @@ func main() {
 				continue
 			}
 			f.Close()
-			imgs<-makeImg(img)
+			imgs <- makeImg(img)
 		}
-    close(imgs)
+		close(imgs)
 	}(files)
 
-  for img := range imgs {
-    fmt.Print(img)
-    time.Sleep(time.Duration(3) * time.Second)
-  }
-  fmt.Println("That's all folks!")
+	for img := range imgs {
+		go func(i string) {
+			// this is the most expensive part so have to do something special
+			// somehow this reduces the cost of printing, so...
+			print(i)
+		}(img)
+		time.Sleep(time.Duration(3) * time.Second)
+	}
+	fmt.Println("That's all folks!")
 }
 
 func dimens() (int, int) {
@@ -86,8 +90,8 @@ func avg(colors chan color.Color, size int) (float64, float64, float64) {
 }
 
 type ColorString struct {
-  r, g, b int
-  contents string
+	r, g, b  int
+	contents string
 }
 
 func (c ColorString) str() string {
@@ -95,29 +99,29 @@ func (c ColorString) str() string {
 }
 
 func (c ColorString) equalColors(o ColorString) bool {
-  return c.r == o.r &&c.g == o.g &&c.b == o.b
+	return c.r == o.r && c.g == o.g && c.b == o.b
 }
 
 func colorsToString(colors []ColorString) string {
-  var res strings.Builder
-  for _, v := range colors {
-    res.WriteString(v.str())
-  }
-  return res.String()
+	var res strings.Builder
+	for _, v := range colors {
+		res.WriteString(v.str())
+	}
+	return res.String()
 }
 
 func makeImg(img image.Image) string {
-  var res strings.Builder
+	var res strings.Builder
 	cols, rows := dimens()
 	bounds := img.Bounds()
 	width, height := bounds.Dx()-2, bounds.Dy()-2
 	xChunkSize := float64(width) / float64(cols)
 	yChunkSize := float64(height) / float64(rows)
-	blocks := []rune("░▒▓█")
+	blocks := []rune("░▒▓")
 
 	for y := 0.0; y < float64(height)-5; y += yChunkSize {
-    res.WriteRune('\n')
-    line := make([]ColorString, 0)
+		res.WriteRune('\n')
+		line := make([]ColorString, 0)
 		for x := 0.0; x < float64(width)-5; x += xChunkSize {
 			colors := make(chan color.Color, int(xChunkSize*yChunkSize))
 			for i := 0; i < int(xChunkSize); i++ {
@@ -126,20 +130,23 @@ func makeImg(img image.Image) string {
 				}
 			}
 			close(colors)
+      if len(colors) == 0 {
+        continue
+      }
 			r, g, b := avg(colors, len(colors))
 			lum := luminance(r, g, b)
-      contents := string(blocks[int(lum/255*float64(len(blocks)-1))])
-      c := ColorString{int(r),int(g),int(b),contents}
-      if (len(line) == 0) {
-        line = append(line, c)
-      } else if (line[len(line)-1].equalColors(c)) {
-        line[len(line)-1].contents += contents
-      } else {
-        line = append(line, c)
-      }
+			contents := string(blocks[int(lum/255*float64(len(blocks)-1))])
+			c := ColorString{int(r), int(g), int(b), contents}
+			if len(line) == 0 {
+				line = append(line, c)
+			} else if line[len(line)-1].equalColors(c) {
+				line[len(line)-1].contents += contents
+			} else {
+				line = append(line, c)
+			}
 		}
-    res.WriteString(colorsToString(line))
+		res.WriteString(colorsToString(line))
 	}
 
-  return res.String()
+	return res.String()
 }
