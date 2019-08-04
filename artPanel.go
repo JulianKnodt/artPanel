@@ -1,11 +1,13 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"image"
 	"image/color"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/big"
@@ -14,33 +16,54 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
+var (
+	sleep      = flag.Duration("sleep", 5*time.Second, "How long to sleep for")
+	p          = flag.String("p", ".", "Path to folder containing images to render")
+	queueSize  = flag.Int("qs", 2, "# of imgs to queue(larger # == less latency, more mem)")
+	chars      = flag.String("chars", "░▒▓█", "Characters to use for rendering")
+	numWorkers = flag.Int("workers", 3, "Number of workers for rendering")
+)
+
 func main() {
-	dir := os.Args[1]
+	flag.Parse()
+	dir := *p
 	files, err := ioutil.ReadDir(dir)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	imgs := make(chan string, 2)
-	go func(files []os.FileInfo) {
-		for _, file := range files {
-			f, err := os.Open(path.Join(dir, file.Name()))
-			if err != nil {
-				continue
-			}
-			img, _, err := image.Decode(f)
-			if err != nil {
+	imgs := make(chan string, *queueSize)
+	fileSend := make(chan os.FileInfo, len(files))
+	var once sync.Once
+
+	for i := 0; i < *numWorkers; i++ {
+		go func() {
+			for file := range fileSend {
+				f, err := os.Open(path.Join(dir, file.Name()))
+				if err != nil {
+					continue
+				}
+				img, _, err := image.Decode(f)
+				if err != nil {
+					f.Close()
+					continue
+				}
 				f.Close()
-				continue
+				imgs <- makeImg(img)
 			}
-			f.Close()
-			imgs <- makeImg(img)
-		}
-		close(imgs)
-	}(files)
+			once.Do(func() {
+				close(imgs)
+			})
+		}()
+	}
+	for _, info := range files {
+		fileSend <- info
+	}
+	close(fileSend)
 
 	for img := range imgs {
 		go func(i string) {
@@ -48,7 +71,7 @@ func main() {
 			// somehow this reduces the cost of printing, so...
 			print(i)
 		}(img)
-		time.Sleep(time.Duration(3) * time.Second)
+		time.Sleep(*sleep)
 	}
 	fmt.Println("That's all folks!")
 }
@@ -94,20 +117,19 @@ type ColorString struct {
 	contents string
 }
 
-func (c ColorString) str() string {
-	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm%s\x1b[0m", c.r, c.g, c.b, c.contents)
+func (c ColorString) str(w io.Writer) {
+	fmt.Fprintf(w, "\x1b[38;2;%d;%d;%dm%s\x1b[0m", c.r, c.g, c.b, c.contents)
+	return
 }
 
 func (c ColorString) equalColors(o ColorString) bool {
 	return c.r == o.r && c.g == o.g && c.b == o.b
 }
 
-func colorsToString(colors []ColorString) string {
-	var res strings.Builder
+func colorsToString(w io.Writer, colors []ColorString) {
 	for _, v := range colors {
-		res.WriteString(v.str())
+		v.str(w)
 	}
-	return res.String()
 }
 
 func makeImg(img image.Image) string {
@@ -117,7 +139,7 @@ func makeImg(img image.Image) string {
 	width, height := bounds.Dx()-2, bounds.Dy()-2
 	xChunkSize := float64(width) / float64(cols)
 	yChunkSize := float64(height) / float64(rows)
-	blocks := []rune("░▒▓")
+	blocks := []rune(*chars)
 
 	for y := 0.0; y < float64(height)-5; y += yChunkSize {
 		res.WriteRune('\n')
@@ -130,9 +152,9 @@ func makeImg(img image.Image) string {
 				}
 			}
 			close(colors)
-      if len(colors) == 0 {
-        continue
-      }
+			if len(colors) == 0 {
+				continue
+			}
 			r, g, b := avg(colors, len(colors))
 			lum := luminance(r, g, b)
 			contents := string(blocks[int(lum/255*float64(len(blocks)-1))])
@@ -145,7 +167,7 @@ func makeImg(img image.Image) string {
 				line = append(line, c)
 			}
 		}
-		res.WriteString(colorsToString(line))
+		colorsToString(&res, line)
 	}
 
 	return res.String()

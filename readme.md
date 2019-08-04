@@ -17,6 +17,5 @@ go build .
 ```
 
 ## Features to be built
-Color?
-Automatic line spacing compression for higher res images?
+Please suggest.
 
