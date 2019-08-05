@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"image"
@@ -11,21 +12,24 @@ import (
 	"io/ioutil"
 	"log"
 	"math/big"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
 var (
-	sleep      = flag.Duration("sleep", 5*time.Second, "How long to sleep for")
+	sleep      = flag.Duration("sleep", 3*time.Second, "How long to sleep for")
 	p          = flag.String("p", ".", "Path to folder containing images to render")
 	queueSize  = flag.Int("qs", 2, "# of imgs to queue(larger # == less latency, more mem)")
 	chars      = flag.String("chars", "░▒▓█", "Characters to use for rendering")
-	numWorkers = flag.Int("workers", 3, "Number of workers for rendering")
+	numWorkers = flag.Int("workers", 2, "Number of workers for rendering")
+	fixWidth   = flag.Int("width", -1, "Fixed width(negative implies unfixed)")
+	fixHeight  = flag.Int("height", -1, "Fixed height(negative implies unfixed)")
+	shuffle    = flag.Bool("shuffle", true, "Shuffle source images")
 )
 
 func main() {
@@ -34,6 +38,11 @@ func main() {
 	files, err := ioutil.ReadDir(dir)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if *shuffle {
+		rand.New(rand.NewSource(time.Now().UnixNano())).Shuffle(len(files), func(i, j int) {
+			files[i], files[j] = files[j], files[i]
+		})
 	}
 
 	imgs := make(chan string, *queueSize)
@@ -69,27 +78,31 @@ func main() {
 		go func(i string) {
 			// this is the most expensive part so have to do something special
 			// somehow this reduces the cost of printing, so...
-			print(i)
+			println(i)
 		}(img)
 		time.Sleep(*sleep)
 	}
 	fmt.Println("That's all folks!")
 }
 
-func dimens() (int, int) {
+func dimens() (c int, r int) {
+	if *fixWidth > 0 && *fixHeight > 0 {
+		return *fixWidth, *fixHeight
+	}
 	cmd := exec.Command("stty", "size")
 	cmd.Stdin = os.Stdin
 	res, err := cmd.Output()
 	if err != nil {
 		log.Fatal(err)
 	}
-	out := strings.Split(string(res), " ")
-	rows, cols := out[0], out[1]
-	if err != nil {
-		log.Fatal(err)
+	fmt.Fscanf(bytes.NewReader(res), "%d %d", &r, &c)
+	if *fixWidth > 0 && c > *fixWidth {
+		ratio := float64(*fixWidth) / float64(c)
+		c, r = *fixWidth, int(float64(r)*ratio)
+	} else if *fixHeight > 0 && r > *fixHeight {
+		ratio := float64(r) / float64(*fixHeight)
+		c, r = int(float64(c)*ratio), *fixHeight
 	}
-	c, err := strconv.Atoi(strings.Trim(string(cols), "\n"))
-	r, err := strconv.Atoi(strings.Trim(string(rows), "\n"))
 	return c, r
 }
 
