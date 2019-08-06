@@ -47,8 +47,10 @@ func main() {
 
 	imgs := make(chan string, *queueSize)
 	fileSend := make(chan os.FileInfo, len(files))
+	var wg sync.WaitGroup
 	var once sync.Once
 
+	wg.Add(*numWorkers)
 	for i := 0; i < *numWorkers; i++ {
 		go func() {
 			for file := range fileSend {
@@ -64,6 +66,8 @@ func main() {
 				f.Close()
 				imgs <- makeImg(img)
 			}
+			wg.Done()
+			wg.Wait()
 			once.Do(func() {
 				close(imgs)
 			})
