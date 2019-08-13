@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"flag"
 	"fmt"
@@ -30,6 +31,7 @@ var (
 	fixWidth   = flag.Int("width", -1, "Fixed width(negative implies unfixed)")
 	fixHeight  = flag.Int("height", -1, "Fixed height(negative implies unfixed)")
 	shuffle    = flag.Bool("shuffle", true, "Shuffle source images")
+  bufferSize = flag.Int("buf", 4096 * 2, "Size of buffer for output")
 )
 
 func main() {
@@ -78,11 +80,12 @@ func main() {
 	}
 	close(fileSend)
 
+	bufOut := bufio.NewWriterSize(os.Stdout, *bufferSize)
 	for img := range imgs {
 		go func(i string) {
 			// this is the most expensive part so have to do something special
 			// somehow this reduces the cost of printing, so...
-			println(i)
+			fmt.Fprintln(bufOut, i)
 		}(img)
 		time.Sleep(*sleep)
 	}
