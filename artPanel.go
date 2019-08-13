@@ -31,7 +31,7 @@ var (
 	fixWidth   = flag.Int("width", -1, "Fixed width(negative implies unfixed)")
 	fixHeight  = flag.Int("height", -1, "Fixed height(negative implies unfixed)")
 	shuffle    = flag.Bool("shuffle", true, "Shuffle source images")
-  bufferSize = flag.Int("buf", 4096 * 2, "Size of buffer for output")
+	bufferSize = flag.Int("buf", 4096*2, "Size of buffer for output")
 )
 
 func main() {
