@@ -12,6 +12,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math"
 	"math/big"
 	"math/rand"
 	"os"
@@ -82,12 +83,11 @@ func main() {
 
 	bufOut := bufio.NewWriterSize(os.Stdout, *bufferSize)
 	for img := range imgs {
-		go func(i string) {
-			// this is the most expensive part so have to do something special
-			// somehow this reduces the cost of printing, so...
-			fmt.Fprintln(bufOut, i)
-		}(img)
+		// this is the most expensive part so have to do something special
+		// somehow this reduces the cost of printing, so...
+		bufOut.WriteString(img)
 		time.Sleep(*sleep)
+		print("\033[H\033[2J")
 	}
 	fmt.Println("That's all folks!")
 }
@@ -117,39 +117,43 @@ func luminance(r, g, b float64) float64 {
 	return 0.2126*r + 0.7152*g + 0.0722*b
 }
 
-func avg(colors chan color.Color, size int) (float64, float64, float64) {
-	sumR, sumG, sumB := big.NewFloat(0), big.NewFloat(0), big.NewFloat(0)
-	for c := range colors {
-		r, g, b, _ := c.RGBA()
-		sumR.Add(sumR, big.NewFloat(float64(r>>8)))
-		sumG.Add(sumG, big.NewFloat(float64(g>>8)))
-		sumB.Add(sumB, big.NewFloat(float64(b>>8)))
-	}
-	sizeF := big.NewFloat(float64(size))
-	r, _ := sumR.Quo(sumR, sizeF).Float64()
-	g, _ := sumG.Quo(sumG, sizeF).Float64()
-	b, _ := sumB.Quo(sumB, sizeF).Float64()
+type Avg struct {
+	r, g, b *big.Float
+	count   int
+}
+
+func NewAvg() *Avg {
+	return &Avg{big.NewFloat(0), big.NewFloat(0), big.NewFloat(0), 0}
+}
+
+func (a *Avg) Add(c color.Color) {
+	r, g, b, _ := c.RGBA()
+	a.r.Add(a.r, big.NewFloat(float64(r>>8)))
+	a.g.Add(a.g, big.NewFloat(float64(g>>8)))
+	a.b.Add(a.b, big.NewFloat(float64(b>>8)))
+	a.count++
+}
+
+func (a *Avg) Out() (float64, float64, float64) {
+	size := big.NewFloat(float64(a.count))
+	r, _ := a.r.Quo(a.r, size).Float64()
+	g, _ := a.g.Quo(a.g, size).Float64()
+	b, _ := a.b.Quo(a.b, size).Float64()
 	return r, g, b
 }
 
 type ColorString struct {
 	r, g, b  int
-	contents string
+	contents []rune
 }
 
-func (c ColorString) str(w io.Writer) {
-	fmt.Fprintf(w, "\x1b[38;2;%d;%d;%dm%s\x1b[0m", c.r, c.g, c.b, c.contents)
+func (c *ColorString) str(w io.Writer) {
+	fmt.Fprintf(w, "\x1b[38;2;%d;%d;%dm%s\x1b[0m", c.r, c.g, c.b, string(c.contents))
 	return
 }
 
-func (c ColorString) equalColors(o ColorString) bool {
-	return c.r == o.r && c.g == o.g && c.b == o.b
-}
-
-func colorsToString(w io.Writer, colors []ColorString) {
-	for _, v := range colors {
-		v.str(w)
-	}
+func (c *ColorString) equal(r, g, b int) bool {
+	return c.r == r && c.g == g && c.b == b
 }
 
 func makeImg(img image.Image) string {
@@ -157,37 +161,37 @@ func makeImg(img image.Image) string {
 	cols, rows := dimens()
 	bounds := img.Bounds()
 	width, height := bounds.Dx()-2, bounds.Dy()-2
-	xChunkSize := float64(width) / float64(cols)
-	yChunkSize := float64(height) / float64(rows)
+	xStep := math.Max(float64(width)/float64(cols), 1)
+	yStep := math.Max(float64(height)/float64(rows), 1)
+	res.Grow(int((float64(height*width) / (yStep * xStep))))
 	blocks := []rune(*chars)
 
-	for y := 0.0; y < float64(height)-5; y += yChunkSize {
+	for y := 0.0; y < float64(height)-5; y += yStep {
 		res.WriteRune('\n')
-		line := make([]ColorString, 0)
-		for x := 0.0; x < float64(width)-5; x += xChunkSize {
-			colors := make(chan color.Color, int(xChunkSize*yChunkSize))
-			for i := 0; i < int(xChunkSize); i++ {
-				for j := 0; j < int(yChunkSize); j++ {
-					colors <- img.At(int(x)+int(i), int(y)+int(i))
+		var prev *ColorString
+		for x := 0.0; x < float64(width)-5; x += xStep {
+			avg := NewAvg()
+			for i := 0; i < int(xStep); i++ {
+				for j := 0; j < int(yStep); j++ {
+					avg.Add(img.At(int(x)+int(i), int(y)+int(i)))
 				}
 			}
-			close(colors)
-			if len(colors) == 0 {
-				continue
-			}
-			r, g, b := avg(colors, len(colors))
+			r, g, b := avg.Out()
 			lum := luminance(r, g, b)
-			contents := string(blocks[int(lum/255*float64(len(blocks)-1))])
-			c := ColorString{int(r), int(g), int(b), contents}
-			if len(line) == 0 {
-				line = append(line, c)
-			} else if line[len(line)-1].equalColors(c) {
-				line[len(line)-1].contents += contents
+			rI, gI, bI := int(r), int(g), int(b)
+			content := blocks[int(lum/255*float64(len(blocks)-1))]
+			if prev == nil {
+				prev = &ColorString{rI, gI, bI, []rune{content}}
+			} else if prev.equal(rI, gI, bI) {
+				prev.contents = append(prev.contents, content)
 			} else {
-				line = append(line, c)
+				prev.str(&res)
+				prev = &ColorString{rI, gI, bI, []rune{content}}
 			}
 		}
-		colorsToString(&res, line)
+		if prev != nil {
+			prev.str(&res)
+		}
 	}
 
 	return res.String()
