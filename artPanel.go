@@ -83,11 +83,13 @@ func main() {
 
 	bufOut := bufio.NewWriterSize(os.Stdout, *bufferSize)
 	for img := range imgs {
+		println("\033[H\033[2J")
 		// this is the most expensive part so have to do something special
 		// somehow this reduces the cost of printing, so...
 		bufOut.WriteString(img)
+		bufOut.WriteRune('\n')
+		bufOut.Flush()
 		time.Sleep(*sleep)
-		print("\033[H\033[2J")
 	}
 	fmt.Println("That's all folks!")
 }
